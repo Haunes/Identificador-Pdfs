@@ -183,7 +183,7 @@ if uploaded_file is not None:
                         type: 'streamlit:setComponentValue',
                         value: newRect
                     }}, '*');
-                }
+                }}
                 
                 isDrawing = false;
                 redraw();
