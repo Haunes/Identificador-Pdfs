@@ -1,6 +1,6 @@
 streamlit
+streamlit-drawable-canvas-fix
 pdfplumber
 pandas
 openpyxl
 Pillow
-streamlit-drawable-canvas
