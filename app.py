@@ -271,13 +271,12 @@ if uploaded_file is not None:
         html_code,
         height=pix.height + 150,
         scrolling=True,
-        key="pdf_canvas",  # ← ESTE KEY ES CLAVE
     )
 
     # ============================
     # Leer selección recibida desde el canvas
     # ============================
-    rect_value = st.session_state.get("pdf_canvas")
+    # rect_value = st.session_state.get("pdf_canvas")
 
     if rect_value:
         try:
