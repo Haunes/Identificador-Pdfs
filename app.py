@@ -3,39 +3,22 @@ from streamlit_drawable_canvas import st_canvas
 import pdfplumber
 import pandas as pd
 from io import BytesIO
+from PIL import Image
+import numpy as np
 
 # =========================
-# Configuración general
+# Configuración básica
 # =========================
 st.set_page_config(page_title="Extractor visual de tablas", layout="wide")
-RESOLUTION = 150  # DPI para convertir el PDF a imagen
+RESOLUTION = 150  # DPI para convertir PDF -> imagen
 
-# Inicializamos estado
 if "pdf_bytes" not in st.session_state:
     st.session_state.pdf_bytes = None
     st.session_state.pdf_name = None
 
-# rects_by_page: { page_idx: { "rects":[(x0,y0,x1,y1),...],
-#                              "canvas_w":int, "canvas_h":int } }
-if "rects_by_page" not in st.session_state:
-    st.session_state.rects_by_page = {}
-
-
-# =========================
-# Función de mapeo canvas -> PDF
-# =========================
-def canvas_rect_to_pdf_bbox(rect, canvas_w, canvas_h, pdf_w, pdf_h):
-    """
-    rect: (x0_c, y0_c, x1_c, y1_c) en coords del canvas (origen arriba-izquierda)
-    Devuelve bbox en coords del PDF (mismo origen que pdfplumber.to_image / crop).
-    """
-    x0_c, y0_c, x1_c, y1_c = rect
-    x0_pdf = x0_c / canvas_w * pdf_w
-    x1_pdf = x1_c / canvas_w * pdf_w
-    y0_pdf = y0_c / canvas_h * pdf_h
-    y1_pdf = y1_c / canvas_h * pdf_h
-    return (x0_pdf, y0_pdf, x1_pdf, y1_pdf)
-
+if "selections" not in st.session_state:
+    # {page_index: [ (x0_px, y0_px, x1_px, y1_px), ... ]}
+    st.session_state.selections = {}
 
 # =========================
 # Subir PDF
@@ -44,21 +27,21 @@ st.sidebar.title("Paso 1: Subir PDF")
 uploaded_file = st.sidebar.file_uploader("PDF con tablas", type=["pdf"])
 
 if uploaded_file is not None:
-    # Si es un archivo nuevo, guardamos bytes y limpiamos selecciones
+    # Si es un PDF nuevo, guardamos bytes y limpiamos selecciones
     if st.session_state.pdf_name != uploaded_file.name:
         st.session_state.pdf_bytes = uploaded_file.read()
         st.session_state.pdf_name = uploaded_file.name
-        st.session_state.rects_by_page = {}
+        st.session_state.selections = {}
 
 if st.session_state.pdf_bytes is None:
     st.info("Sube un PDF en la barra lateral para empezar.")
     st.stop()
 
-pdf_bytes = st.session_state.pdf_bytes
-
 # =========================
 # Cargar PDF y elegir página
 # =========================
+pdf_bytes = st.session_state.pdf_bytes
+
 with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
     num_pages = len(pdf.pages)
 
@@ -67,23 +50,23 @@ page_number = st.sidebar.number_input(
     "Página", min_value=1, max_value=num_pages, value=1, step=1
 )
 page_index = page_number - 1
+
+with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
+    page = pdf.pages[page_index]
+    # Convertimos la página a imagen para usarla de fondo en el canvas
+    img_obj = page.to_image(resolution=RESOLUTION)
+    pil_image = img_obj.annotated
+    page_width_pdf, page_height_pdf = page.width, page.height
+    img_width_px, img_height_px = pil_image.size
+
 st.sidebar.caption(f"Página {page_number} de {num_pages}")
 
 # =========================
-# Mostrar página como imagen y canvas
+# Canvas para dibujar rectángulos
 # =========================
-with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
-    page = pdf.pages[page_index]
-    pdf_w, pdf_h = page.width, page.height
-
-    # Convertimos la página a imagen PIL
-    page_image = page.to_image(resolution=RESOLUTION)
-    pil_image = page_image.original
-    img_width_px, img_height_px = pil_image.size
-
-st.markdown(f"### Paso 3: Dibuja rectángulos sobre las tablas (Página {page_number})")
+st.markdown("### Paso 3: Dibuja rectángulos sobre las tablas")
 st.caption(
-    "Usa el mouse para dibujar un cuadro alrededor de cada tabla de esta página. "
+    "Usa el mouse para dibujar un cuadro alrededor de cada tabla. "
     "Luego haz clic en **Guardar selecciones de esta página**."
 )
 
@@ -91,12 +74,11 @@ canvas_result = st_canvas(
     fill_color="rgba(0, 0, 0, 0)",  # rectángulo transparente
     stroke_width=2,
     stroke_color="#FF0000",
-    background_color="#FFFFFF",
-    background_image=pil_image,      # PIL.Image
+    background_image=pil_image,
     update_streamlit=True,
-    height=img_height_px,            # alto del lienzo = alto de la imagen
+    height=img_height_px,
+    width=img_width_px,
     drawing_mode="rect",
-    display_toolbar=True,
     key=f"canvas_page_{page_index}",
 )
 
@@ -106,92 +88,86 @@ canvas_result = st_canvas(
 if st.button("Guardar selecciones de esta página"):
     rects = []
     if canvas_result is not None and canvas_result.json_data is not None:
-        objects = canvas_result.json_data.get("objects", [])
-
-        # dim reales del canvas
-        if canvas_result.image_data is not None:
-            canvas_h, canvas_w, _ = canvas_result.image_data.shape
-        else:
-            # fallback (no debería pasar normalmente)
-            canvas_h = img_height_px
-            canvas_w = img_width_px
-
-        for obj in objects:
+        for obj in canvas_result.json_data.get("objects", []):
             if obj.get("type") == "rect":
                 x = obj.get("left", 0)
                 y = obj.get("top", 0)
                 w = obj.get("width", 0)
                 h = obj.get("height", 0)
-                x0 = x
-                y0 = y
-                x1 = x + w
-                y1 = y + h
-                # nos aseguramos de que x0<x1, y0<y1
-                x0, x1 = sorted([x0, x1])
-                y0, y1 = sorted([y0, y1])
-                rects.append((x0, y0, x1, y1))
+                rects.append((x, y, x + w, y + h))
 
-        if rects:
-            st.session_state.rects_by_page[page_index] = {
-                "rects": rects,
-                "canvas_w": canvas_w,
-                "canvas_h": canvas_h,
-            }
-            st.success(
-                f"Se guardaron {len(rects)} rectángulo(s) para la página {page_number}."
-            )
-        else:
-            st.warning("No se encontraron rectángulos dibujados en el canvas.")
+    if rects:
+        existing = st.session_state.selections.get(page_index, [])
+        existing.extend(rects)
+        st.session_state.selections[page_index] = existing
+        st.success(
+            f"Se guardaron {len(rects)} rectángulos nuevos en la página {page_number}."
+        )
     else:
-        st.warning("No se encontró información del canvas (vuelve a intentar).")
+        st.warning("No se encontraron rectángulos dibujados en el canvas.")
 
 # =========================
-# Resumen de selecciones
+# Mostrar resumen de selecciones
 # =========================
-st.markdown("### Paso 4: Resumen de selecciones")
-if not st.session_state.rects_by_page:
+st.markdown("### Selecciones actuales")
+if not st.session_state.selections:
     st.write("Aún no hay rectángulos guardados.")
 else:
-    for p_idx, info in sorted(st.session_state.rects_by_page.items()):
-        st.write(
-            f"- Página {p_idx + 1}: {len(info['rects'])} rectángulo(s) guardado(s)."
-        )
+    for p_idx, rects in sorted(st.session_state.selections.items()):
+        st.write(f"- Página {p_idx + 1}: {len(rects)} rectángulo(s)")
+
+# =========================
+# Función de conversión de píxeles -> coordenadas PDF
+# =========================
+def px_bbox_to_pdf_bbox(bbox_px, img_w, img_h, pdf_w, pdf_h):
+    """
+    Convierte un bbox en píxeles (sobre la imagen) a bbox en coordenadas del PDF.
+    bbox_px = (x0_px, y0_px, x1_px, y1_px) con origen en la esquina superior izquierda.
+    """
+    x0_px, y0_px, x1_px, y1_px = bbox_px
+    x0_pdf = x0_px / img_w * pdf_w
+    x1_pdf = x1_px / img_w * pdf_w
+    y0_pdf = y0_px / img_h * pdf_h
+    y1_pdf = y1_px / img_h * pdf_h
+    return (x0_pdf, y0_pdf, x1_pdf, y1_pdf)
+
 
 # =========================
 # Extraer tablas y exportar a Excel
 # =========================
-st.markdown("### Paso 5: Extraer tablas y descargar Excel")
+st.markdown("### Paso 4: Extraer tablas y descargar Excel")
 
-if st.session_state.rects_by_page:
+if st.session_state.selections:
     if st.button("Extraer todas las tablas y crear Excel"):
         all_tables = []
 
         with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
-            for p_idx, info in st.session_state.rects_by_page.items():
+            for p_idx, rects in st.session_state.selections.items():
                 page = pdf.pages[p_idx]
-                pdf_w, pdf_h = page.width, page.height
+                page_w, page_h = page.width, page.height
 
-                canvas_w = info["canvas_w"]
-                canvas_h = info["canvas_h"]
+                # Volvemos a generar imagen para obtener mismas dimensiones en píxeles
+                img_obj = page.to_image(resolution=RESOLUTION)
+                pil_image = img_obj.annotated
+                img_w, img_h = pil_image.size
 
-                for rect in info["rects"]:
-                    bbox_pdf = canvas_rect_to_pdf_bbox(
-                        rect, canvas_w, canvas_h, pdf_w, pdf_h
+                for bbox_px in rects:
+                    bbox_pdf = px_bbox_to_pdf_bbox(
+                        bbox_px, img_w, img_h, page_w, page_h
                     )
 
-                    # Recortar región correspondiente en el PDF y extraer tablas
+                    # Recortar región en el PDF y tratar de extraer tabla
                     cropped = page.crop(bbox_pdf)
                     tables = cropped.extract_tables()
 
                     for table in tables:
                         if not table:
                             continue
+                        # Primera fila = encabezados (asumido)
                         header, *rows = table
-                        # Si hay filas y la primera la tomamos como header
                         if rows:
                             df = pd.DataFrame(rows, columns=header)
                         else:
-                            # fallback si no está bien separada header/rows
                             df = pd.DataFrame(table)
                         all_tables.append(df)
 
@@ -205,9 +181,7 @@ if st.session_state.rects_by_page:
                 merged_df.to_excel(writer, index=False, sheet_name="Tablas")
 
             output.seek(0)
-            st.success(
-                f"Se extrajeron {len(all_tables)} tablas y se unificaron en un solo DataFrame."
-            )
+            st.success(f"Se extrajeron {len(all_tables)} tablas y se unificaron.")
             st.download_button(
                 "Descargar Excel con todas las tablas",
                 data=output,
@@ -218,4 +192,4 @@ if st.session_state.rects_by_page:
                 ),
             )
 else:
-    st.info("Primero guarda al menos un rectángulo en alguna página.")
+    st.info("Primero dibuja y guarda al menos un rectángulo en alguna página.")
