@@ -1,3 +1,0 @@
-ghostscript
-python3-opencv
-libgl1-mesa-glx
