@@ -97,22 +97,38 @@ if uploaded_file is not None:
                 font-family: Arial;
                 font-size: 14px;
             }}
+            button {{
+                margin-top: 10px;
+                padding: 10px 20px;
+                background: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 16px;
+            }}
+            button:hover {{
+                background: #45a049;
+            }}
         </style>
     </head>
     <body>
         <div id="container">
             <canvas id="canvas" width="{pix.width}" height="{pix.height}"></canvas>
         </div>
-        <div id="info">Dibuja un rectángulo sobre la tabla. Los rectángulos se guardarán automáticamente.</div>
+        <div id="info">Dibuja un rectángulo sobre la tabla y presiona "Guardar Selección"</div>
+        <button id="saveBtn" style="display:none;">✅ Guardar Selección</button>
         
         <script>
             const canvas = document.getElementById('canvas');
             const ctx = canvas.getContext('2d');
             const img = new Image();
+            const saveBtn = document.getElementById('saveBtn');
             
             let isDrawing = false;
-            let startX, startY;
+            let startX, startY, endX, endY;
             let rectangles = {json.dumps(current_page_rects)};
+            let tempRect = null;
             
             img.onload = function() {{
                 redraw();
@@ -132,6 +148,13 @@ if uploaded_file is not None:
                     ctx.font = 'bold 16px Arial';
                     ctx.fillText('#' + (idx + 1), rect.x0 + 5, rect.y0 + 20);
                 }});
+                
+                // Dibujar rectángulo temporal
+                if (tempRect) {{
+                    ctx.strokeStyle = '#00FF00';
+                    ctx.lineWidth = 3;
+                    ctx.strokeRect(tempRect.x0, tempRect.y0, tempRect.x1 - tempRect.x0, tempRect.y1 - tempRect.y0);
+                }}
             }}
             
             canvas.addEventListener('mousedown', (e) => {{
@@ -139,81 +162,98 @@ if uploaded_file is not None:
                 startX = e.clientX - rect.left;
                 startY = e.clientY - rect.top;
                 isDrawing = true;
+                tempRect = null;
+                saveBtn.style.display = 'none';
             }});
             
             canvas.addEventListener('mousemove', (e) => {{
                 if (!isDrawing) return;
                 
                 const rect = canvas.getBoundingClientRect();
-                const currentX = e.clientX - rect.left;
-                const currentY = e.clientY - rect.top;
+                endX = e.clientX - rect.left;
+                endY = e.clientY - rect.top;
+                
+                tempRect = {{
+                    x0: Math.min(startX, endX),
+                    y0: Math.min(startY, endY),
+                    x1: Math.max(startX, endX),
+                    y1: Math.max(startY, endY)
+                }};
                 
                 redraw();
-                
-                // Dibujar rectángulo temporal
-                ctx.strokeStyle = '#00FF00';
-                ctx.lineWidth = 2;
-                ctx.setLineDash([5, 5]);
-                ctx.strokeRect(startX, startY, currentX - startX, currentY - startY);
-                ctx.setLineDash([]);
             }});
             
             canvas.addEventListener('mouseup', (e) => {{
                 if (!isDrawing) return;
                 
                 const rect = canvas.getBoundingClientRect();
-                const endX = e.clientX - rect.left;
-                const endY = e.clientY - rect.top;
+                endX = e.clientX - rect.left;
+                endY = e.clientY - rect.top;
                 
                 const width = Math.abs(endX - startX);
                 const height = Math.abs(endY - startY);
                 
-                // Solo guardar si el rectángulo es suficientemente grande
                 if (width > 10 && height > 10) {{
-                    const newRect = {{
-                        page: {page_num},
+                    tempRect = {{
                         x0: Math.min(startX, endX),
                         y0: Math.min(startY, endY),
                         x1: Math.max(startX, endX),
                         y1: Math.max(startY, endY)
                     }};
-                    
-                    // Enviar a Streamlit
-                    window.parent.postMessage({{
-                        type: 'streamlit:setComponentValue',
-                        value: newRect
-                    }}, '*');
+                    saveBtn.style.display = 'block';
+                    redraw();
                 }}
                 
                 isDrawing = false;
-                redraw();
             }});
             
-            // Prevenir scroll al arrastrar
-            canvas.addEventListener('touchstart', (e) => e.preventDefault());
-            canvas.addEventListener('touchmove', (e) => e.preventDefault());
+            saveBtn.addEventListener('click', () => {{
+                if (tempRect) {{
+                    const newRect = {{
+                        page: {page_num},
+                        x0: Math.round(tempRect.x0),
+                        y0: Math.round(tempRect.y0),
+                        x1: Math.round(tempRect.x1),
+                        y1: Math.round(tempRect.y1)
+                    }};
+                    
+                    window.parent.postMessage({{
+                        type: 'streamlit:setComponentValue',
+                        value: JSON.stringify(newRect)
+                    }}, '*');
+                    
+                    rectangles.push(newRect);
+                    tempRect = null;
+                    saveBtn.style.display = 'none';
+                    redraw();
+                }}
+            }});
         </script>
     </body>
     </html>
     """
     
     # Renderizar canvas
-    result = components.html(html_code, height=pix.height + 100, scrolling=True)
+    result = components.html(html_code, height=pix.height + 150, scrolling=True)
     
     # Si se dibujó un nuevo rectángulo, agregarlo
-    if result is not None and isinstance(result, dict):
-        # Verificar si ya existe
-        exists = any(
-            r['page'] == result['page'] and 
-            r['x0'] == result['x0'] and 
-            r['y0'] == result['y0'] and
-            r['x1'] == result['x1'] and
-            r['y1'] == result['y1']
-            for r in st.session_state.rectangles
-        )
-        if not exists:
-            st.session_state.rectangles.append(result)
-            st.rerun()
+    if result is not None and result != "":
+        try:
+            rect_data = json.loads(result)
+            # Verificar si ya existe
+            exists = any(
+                r['page'] == rect_data['page'] and 
+                r['x0'] == rect_data['x0'] and 
+                r['y0'] == rect_data['y0'] and
+                r['x1'] == rect_data['x1'] and
+                r['y1'] == rect_data['y1']
+                for r in st.session_state.rectangles
+            )
+            if not exists:
+                st.session_state.rectangles.append(rect_data)
+                st.rerun()
+        except:
+            pass
     
     # Mostrar rectángulos guardados
     if st.session_state.rectangles:
