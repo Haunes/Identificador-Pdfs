@@ -71,11 +71,12 @@ canvas_result = st_canvas(
     fill_color="rgba(0, 0, 0, 0)",  # rectángulo transparente
     stroke_width=2,
     stroke_color="#FF0000",
-    background_image=pil_image,
+    background_color="#FFFFFF",
+    background_image=pil_image,      # <- PIL.Image, no int
     update_streamlit=True,
-    height=img_height_px,
-    width=img_width_px,
+    height=img_height_px,            # alto del lienzo
     drawing_mode="rect",
+    display_toolbar=True,
     key=f"canvas_page_{page_index}",
 )
 
