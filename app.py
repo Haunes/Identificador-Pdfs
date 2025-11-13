@@ -55,8 +55,8 @@ with pdfplumber.open(BytesIO(pdf_bytes)) as pdf:
     page = pdf.pages[page_index]
     # Convertimos la página a imagen para usarla de fondo en el canvas
     img_obj = page.to_image(resolution=RESOLUTION)
-    # Convertir numpy array a PIL Image
-    pil_image = Image.fromarray(img_obj.annotated)
+    # Obtener la imagen PIL directamente
+    pil_image = img_obj.original
     page_width_pdf, page_height_pdf = page.width, page.height
     img_width_px, img_height_px = pil_image.size
 
@@ -149,8 +149,8 @@ if st.session_state.selections:
 
                 # Volvemos a generar imagen para obtener mismas dimensiones en píxeles
                 img_obj = page.to_image(resolution=RESOLUTION)
-                # Convertir numpy array a PIL Image
-                pil_image = Image.fromarray(img_obj.annotated)
+                # Obtener la imagen PIL directamente
+                pil_image = img_obj.original
                 img_w, img_h = pil_image.size
 
                 for bbox_px in rects:
