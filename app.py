@@ -234,7 +234,6 @@ if uploaded_file is not None:
 
                 isDrawing = false;
             }});
-
             saveBtn.addEventListener('click', () => {{
                 if (tempRect) {{
                     const newRect = {{
@@ -245,19 +244,23 @@ if uploaded_file is not None:
                         y1: Math.round(tempRect.y1)
                     }};
 
-                    // 👇 Enviar el rectángulo a Streamlit
-                    window.parent.postMessage({{
-                        type: 'streamlit:setComponentValue',
-                        value: JSON.stringify(newRect)
-                    }}, '*');
+                    // 👇 IMPORTANTE: añadir isStreamlitMessage: true
+                    window.parent.postMessage(
+                        {{
+                            isStreamlitMessage: true,
+                            type: "streamlit:setComponentValue",
+                            value: JSON.stringify(newRect)
+                        }},
+                        "*"
+                    );
 
-                    // También lo añadimos localmente para que se vea de inmediato
                     rectangles.push(newRect);
                     tempRect = null;
                     saveBtn.style.display = 'none';
                     redraw();
                 }}
             }});
+
         </script>
     </body>
     </html>
@@ -271,35 +274,35 @@ if uploaded_file is not None:
         html_code,
         height=pix.height + 150,
         scrolling=True,
+        # key="pdf_canvas",  # ← ESTE KEY ES CLAVE
     )
 
     # ============================
     # Leer selección recibida desde el canvas
     # ============================
-    # rect_value = st.session_state.get("pdf_canvas")
+    # Renderizar canvas
+    result = components.html(html_code, height=pix.height + 150, scrolling=True)
 
-    if rect_value:
+
+    # Si se dibujó un nuevo rectángulo, agregarlo
+    if result is not None and result != "":
         try:
-            # Puede llegar como string JSON o como dict
-            if isinstance(rect_value, str):
-                rect_data = json.loads(rect_value)
-            else:
-                rect_data = rect_value
-
-            # Evitar duplicados
+            rect_data = json.loads(result)
+            # Verificar si ya existe
             exists = any(
-                r["page"] == rect_data["page"]
-                and r["x0"] == rect_data["x0"]
-                and r["y0"] == rect_data["y0"]
-                and r["x1"] == rect_data["x1"]
-                and r["y1"] == rect_data["y1"]
+                r['page'] == rect_data['page'] and 
+                r['x0'] == rect_data['x0'] and 
+                r['y0'] == rect_data['y0'] and
+                r['x1'] == rect_data['x1'] and
+                r['y1'] == rect_data['y1']
                 for r in st.session_state.rectangles
             )
             if not exists:
                 st.session_state.rectangles.append(rect_data)
-
+                st.rerun()
         except Exception as e:
-            st.warning(f"No se pudo interpretar la selección: {e}")
+            st.warning(f"No se pudo interpretar el rectángulo: {e}")
+
 
         # Opcional: limpiar el valor consumido para no procesarlo en cada rerun
         st.session_state["pdf_canvas"] = None
